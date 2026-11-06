@@ -25,6 +25,13 @@ type Layer = {
   keyframes: Record<number, LayerState>;
 };
 
+type ProjectData = {
+  sceneMode: SceneMode;
+  currentFrame: number;
+  playbackSpeed: number;
+  layers: Layer[];
+};
+
 const totalFrames = 24;
 
 const makeLayer = (
@@ -101,8 +108,34 @@ const getFramePosition = (layer: Layer, frame: number): LayerState => {
   };
 };
 
+const applyPreset = (preset: 'bounce' | 'orbit' | 'stage') => {
+  if (preset === 'bounce') {
+    return [
+      makeLayer('Hero', 'sprite', '#7dd3fc', { x: -180, y: 30, z: 0, rotation: 0, scale: 1.2, depth: 1, }),
+      makeLayer('Ground', 'plane', '#34d399', { x: 0, y: 170, z: 0, rotation: 0, scale: 1.5, depth: 0.75 }),
+      makeLayer('Cloud', 'light', '#e0f2fe', { x: 40, y: -100, z: 20, rotation: 0, scale: 1, depth: 1.2 }),
+    ];
+  }
+
+  if (preset === 'orbit') {
+    return [
+      makeLayer('Planet', 'box', '#fbbf24', { x: 0, y: 0, z: 60, rotation: 0, scale: 1.2, depth: 1.6 }),
+      makeLayer('Ring', 'plane', '#c084fc', { x: 0, y: 0, z: 0, rotation: 30, scale: 1.7, depth: 1.2 }),
+      makeLayer('Moon', 'sprite', '#93c5fd', { x: 180, y: -60, z: 30, rotation: 0, scale: 0.8, depth: 1.4 }),
+    ];
+  }
+
+  return [
+    makeLayer('Hero', 'sprite', '#7dd3fc', { x: -200, y: 0, z: 0, rotation: 0, scale: 1.1, depth: 1 }),
+    makeLayer('Stage', 'plane', '#34d399', { x: 0, y: 150, z: 0, rotation: 0, scale: 1.8, depth: 0.7 }),
+    makeLayer('Spotlight', 'light', '#fef3c7', { x: 0, y: -100, z: 40, rotation: 0, scale: 1, depth: 1.5 }),
+  ];
+};
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [sceneMode, setSceneMode] = useState<SceneMode>('2.5D');
   const [layers, setLayers] = useState<Layer[]>(initialLayers);
   const [selectedLayerId, setSelectedLayerId] = useState<string>(initialLayers[0].id);
@@ -114,6 +147,32 @@ function App() {
     () => layers.find((layer) => layer.id === selectedLayerId) ?? layers[0],
     [layers, selectedLayerId],
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const saved = window.localStorage.getItem('animation-studio-project');
+    if (!saved) return;
+
+    try {
+      const parsed = JSON.parse(saved) as Partial<ProjectData>;
+      if (parsed.sceneMode) setSceneMode(parsed.sceneMode);
+      if (typeof parsed.currentFrame === 'number') setCurrentFrame(parsed.currentFrame);
+      if (typeof parsed.playbackSpeed === 'number') setPlaybackSpeed(parsed.playbackSpeed);
+      if (Array.isArray(parsed.layers) && parsed.layers.length > 0) {
+        setLayers(parsed.layers as Layer[]);
+        setSelectedLayerId((parsed.layers as Layer[])[0].id);
+      }
+    } catch {
+      // ignore invalid local storage content
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const payload: ProjectData = { sceneMode, currentFrame, playbackSpeed, layers };
+    window.localStorage.setItem('animation-studio-project', JSON.stringify(payload));
+  }, [sceneMode, currentFrame, playbackSpeed, layers]);
 
   useEffect(() => {
     if (!isPlaying) return undefined;
@@ -289,6 +348,46 @@ function App() {
     );
   };
 
+  const exportProject = () => {
+    const payload: ProjectData = { sceneMode, currentFrame, playbackSpeed, layers };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'animation-project.json';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importProject = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Partial<ProjectData>;
+      if (!parsed || !Array.isArray(parsed.layers)) {
+        return;
+      }
+
+      setSceneMode(parsed.sceneMode ?? '2.5D');
+      setCurrentFrame(typeof parsed.currentFrame === 'number' ? parsed.currentFrame : 0);
+      setPlaybackSpeed(typeof parsed.playbackSpeed === 'number' ? parsed.playbackSpeed : 10);
+      setLayers(parsed.layers as Layer[]);
+      setSelectedLayerId((parsed.layers as Layer[])[0]?.id ?? initialLayers[0].id);
+    } catch {
+      // ignore invalid file imports
+    }
+
+    event.target.value = '';
+  };
+
+  const applyScenePreset = (preset: 'bounce' | 'orbit' | 'stage') => {
+    const nextLayers = applyPreset(preset);
+    setLayers(nextLayers);
+    setSelectedLayerId(nextLayers[0].id);
+  };
+
   return (
     <div style={{ minHeight: '100vh', padding: 24, background: '#0b1220' }}>
       <div
@@ -355,6 +454,31 @@ function App() {
           >
             + Add layer
           </button>
+
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1.1 }}>
+              Presets
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(['bounce', 'orbit', 'stage'] as const).map((preset) => (
+                <button
+                  key={preset}
+                  onClick={() => applyScenePreset(preset)}
+                  style={{
+                    border: '1px solid #2a3d5d',
+                    background: '#152238',
+                    color: '#edf5ff',
+                    borderRadius: 10,
+                    padding: '8px 10px',
+                    cursor: 'pointer',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
         </aside>
 
         <main style={{ background: '#101a2b', border: '1px solid #1f2a3d', borderRadius: 18, padding: 16 }}>
@@ -453,6 +577,42 @@ function App() {
             >
               Set keyframe
             </button>
+
+            <button
+              onClick={exportProject}
+              style={{
+                background: '#0ea5e9',
+                color: '#ecfeff',
+                border: 'none',
+                borderRadius: 10,
+                padding: '10px 12px',
+                cursor: 'pointer',
+              }}
+            >
+              Export JSON
+            </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                background: '#f59e0b',
+                color: '#fff7ed',
+                border: 'none',
+                borderRadius: 10,
+                padding: '10px 12px',
+                cursor: 'pointer',
+              }}
+            >
+              Import JSON
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              onChange={importProject}
+              style={{ display: 'none' }}
+            />
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#dfe7f1' }}>
               Speed
